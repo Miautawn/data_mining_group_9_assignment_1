@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.fls
+*.fdb_latexmk
+
+# Large data files (don't commit raw/processed data)
+dataset_mood_smartphone.csv
+data/raw/
+data/processed/
+
+# Generated figures (reproducible from code)
+figures/
+
+# Generated PDFs (reproducible from .tex)
+report.pdf
+
+# Claude internal
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/

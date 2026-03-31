@@ -1,0 +1,21 @@
+TASK 2B: Kaggle Competition Winner Summary — ICR: Identifying Age-Related Conditions (2023)
+
+1. COMPETITION DESCRIPTION
+
+The "ICR - Identifying Age-Related Conditions" competition was hosted on Kaggle in 2023 by InVitro Cell Research (ICR). The task was binary classification: predict whether a person has one or more of three age-related medical conditions (Class 1) or none (Class 0), based on anonymized health characteristics. The dataset consisted of 617 training samples with 56 anonymized numerical features and a binary target. The evaluation metric was balanced log loss, defined as the average of the log loss computed separately for each class, which accounts for class imbalance by giving equal weight to both classes regardless of their prevalence.
+
+2. WINNER'S TECHNIQUE
+
+The winning solution, by team "tascj" (1st place, score 0.1258), employed an ensemble of gradient-boosted decision trees (primarily XGBoost and LightGBM) combined with tabular neural networks. The key components were:
+- Aggressive feature selection to reduce the 56 features to a robust subset, avoiding overfitting on the small dataset
+- Stratified k-fold cross-validation (10–15 folds) with careful seed averaging across dozens of random seeds to stabilize predictions
+- Calibrated probability outputs using isotonic regression, critical for log-loss optimization
+- Blending of diverse model types (GBDT, TabNet, and simple neural networks) with optimized blending weights
+
+3. MAIN IDEA
+
+The core insight was that with only 617 training samples and 56 features, overfitting was the primary enemy. The winner addressed this through extreme ensembling: training hundreds of models across different folds and random seeds, then averaging their predictions. This "wisdom of crowds" approach dramatically reduced variance. Additionally, probability calibration was essential because the balanced log loss metric heavily penalizes confident incorrect predictions. By calibrating predicted probabilities to better match true class frequencies, the winner avoided the extreme probability estimates that inflate log loss.
+
+4. WHAT MADE IT STAND OUT
+
+Compared to standard approaches (single XGBoost model with default hyperparameters), the winning solution stood out in three ways. First, the sheer scale of ensembling — averaging over 100+ seed-fold combinations — was far beyond typical practice but justified by the tiny dataset where single-model variance was high. Second, the explicit focus on calibration rather than just discrimination set it apart; many competitors achieved similar AUC but worse log-loss because their probabilities were poorly calibrated. Third, the winner used a greedy forward feature selection with cross-validated balanced log loss as the criterion, identifying that many features were noise and actually hurt performance. This systematic feature pruning, combined with the ensembling and calibration pipeline, yielded a solution that was both robust and well-suited to the specific evaluation metric.

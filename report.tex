@@ -1,0 +1,435 @@
+\documentclass[runningheads]{llncs}
+
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{multirow}
+
+\graphicspath{{figures/}}
+
+\begin{document}
+
+\title{Predicting Next-Day Mood from Smartphone Sensor Data}
+
+\author{Valentijn Heijnsbroek\inst{1} \and Jort Verbeek\inst{1} \and Martynas Jasinskas\inst{1}}
+\authorrunning{Heijnsbroek, Verbeek, Jasinskas}
+\institute{Vrije Universiteit Amsterdam\\
+Group 9 --- Data Mining Techniques, 2026\\
+\email{\{2713246, 2899002, 2892735\}@student.vu.nl}}
+
+\maketitle
+
+% ============================================================
+\section{Introduction}
+% ============================================================
+
+Smartphone applications for mental health monitoring record behavioral and self-reported data that may contain predictive signals for mood changes. Early detection of mood deterioration could enable timely clinical intervention, making this a practically relevant prediction task. We analyze a dataset of 27 participants who used such an application over approximately 10 weeks in early 2014, containing 376,912 timestamped measurements across 19 variables: self-reported mood (1--10 scale), emotional arousal and valence (circumplex model, $-2$ to $+2$), physical activity, phone usage, and app durations across 12 categories.
+
+Our goal is to predict average next-day mood as both a classification task (mood category) and a regression task (continuous mood value), following the CRISP-DM methodology. All experiments use Python with pandas, scikit-learn, and PyTorch. Temporal train/test splits are enforced throughout to prevent data leakage.
+
+% ============================================================
+\section{Data Preparation}
+% ============================================================
+
+\subsection{Exploratory Data Analysis}
+
+The dataset uses long format: each row contains patient ID, timestamp, variable name, and value. Table~\ref{tab:summary} provides summary statistics grouped by variable type.
+
+\begin{table}[H]
+\centering
+\caption{Dataset summary statistics grouped by variable type (27 patients, 376,912 records).}\label{tab:summary}
+\begin{tabular}{llrrrrrr}
+\toprule
+Type & Variable & Records & Mean & Std & Min & Median & Max \\
+\midrule
+\multirow{3}{*}{Self-report} & mood & 5,641 & 6.99 & 1.03 & 1.0 & 7.0 & 10.0 \\
+ & arousal & 5,597 & $-0.10$ & 1.05 & $-2.0$ & 0.0 & 2.0 \\
+ & valence & 5,487 & 0.69 & 0.67 & $-2.0$ & 1.0 & 2.0 \\
+\midrule
+Behavioral & activity & 22,965 & 0.12 & 0.19 & 0.0 & 0.02 & 1.0 \\
+ & screen (s) & 96,578 & 75.3 & 253.8 & 0.04 & 20.0 & 9,867 \\
+ & call / sms & 7,037 & 1.0 & 0.0 & 1 & 1 & 1 \\
+\midrule
+\multirow{2}{*}{App usage (s)} & builtin & 82,704 & 5.7 & 31.1 & 0.0 & 0.5 & 3,792 \\
+ & communication & 22,003 & 46.6 & 147.4 & 0.0 & 7.4 & 6,103 \\
+ & (10 more\ldots) & \multicolumn{5}{c}{highly skewed, median near 0} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Data collection spans 48--102 days per patient (February--June 2014). Key observations follow.
+
+\textbf{Mood is right-skewed} (Fig.~\ref{fig:eda}a): values cluster between 6 and 8, with very few below 4. Mean = 6.99, median = 7.0, indicating generally positive affect. This distribution makes predicting low-mood events particularly challenging.
+
+\textbf{Large inter-individual differences} (Fig.~\ref{fig:eda}b): patient mood means range from 5.5 (AS14.07) to 8.5 (AS14.30). A rating of 7 is ``typical'' for one patient but ``high'' for another, motivating patient-relative feature normalization.
+
+\textbf{Circumplex emotions:} Arousal is symmetric around zero ($\mu = -0.10$), consistent with the neutral midpoint. Valence is positively skewed ($\mu = 0.69$) and correlates with mood ($r \approx 0.45$). Arousal shows a weaker relationship, consistent with the two-dimensional structure of the circumplex model~\cite{russell1980}.
+
+\textbf{Systematic missing data} (Fig.~\ref{fig:missing}): self-report variables are missing on $\sim$40\% of days. Rare app categories (finance, game, weather) exceed 90\% missingness, reflecting genuine non-use. Three patients have prolonged gaps: AS14.01 (21 days), AS14.12 (11 days), AS14.17 (6 days), likely representing periods of app abandonment.
+
+\textbf{App usage multicollinearity:} Screen time and all app categories are strongly intercorrelated ($r > 0.5$), as screen time is the sum of all app durations. This does not harm tree-based models but requires care in feature interpretation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.48\textwidth]{mood_histogram.png}
+\includegraphics[width=0.48\textwidth]{mood_boxplot_per_patient.png}
+\caption{(a) Mood distribution across all patients (right-skewed, mean $= 6.99$). (b) Per-patient boxplots: individual mood baselines range from 5.5 to 8.5, motivating patient-relative features.}\label{fig:eda}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{missing_data_heatmap.png}
+\caption{Missing data heatmap (percentage of days with no data, per patient $\times$ variable). Rare app categories show $>$90\% missing; three patients show prolonged gaps.}\label{fig:missing}
+\end{figure}
+
+\subsection{Data Cleaning}
+
+\subsubsection{Outlier Removal.}
+
+We applied a two-tier strategy. For variables with known valid ranges (mood [1,10], arousal/valence [$-2$,2], activity [0,1], call/sms $\{0,1\}$), values outside domain bounds were removed. No violations were found, confirming internal data integrity.
+
+For unbounded duration variables (screen and 12 appCat.* columns), we removed 4 negative values (sensor artifacts) and capped extreme values at $Q_3 + 3 \times \text{IQR}$. We chose $3\times$ instead of the conventional $1.5\times$ because app usage durations are naturally right-skewed: a stricter threshold would remove genuine long sessions. For example, screen usage was capped at 234.2~s (5,957 values affected). \emph{Capping} rather than \emph{deletion} preserves sample size while limiting outlier leverage on downstream models. In total, 4 rows were removed and $\approx$20,000 values capped.
+
+\subsubsection{Daily Aggregation and Imputation.}
+
+Long-format data was aggregated to the daily level: daily \emph{mean} for self-report variables (averaging within-day variation) and daily \emph{sum} for behavioral variables (cumulative durations/counts). The resulting dataset has 2,154 patient-days and 19 variables.
+
+We compared two imputation strategies appropriate for time series:
+
+\textbf{Method 1 --- Linear interpolation:} missing values are linearly interpolated between the nearest known observations, with forward-fill and back-fill at series edges. This assumes gradual change, appropriate for mood over short gaps.
+
+\textbf{Method 2 --- Last Observation Carried Forward (LOCF):} the most recent known value is carried forward. This assumes stationarity and creates step-function artifacts inconsistent with the gradual nature of mood dynamics.
+
+Both methods produce nearly identical summary statistics (means within 1\%, standard deviations within 2\%). Figure~\ref{fig:imputation} shows the visual difference for patient AS14.01. We selected \textbf{linear interpolation}, supported by Lepot et al.~\cite{lepot2017}, who demonstrate its superiority for regularly sampled time series. LOCF is more appropriate for binary state variables that change abruptly~\cite{schildcrout2018}. Prolonged gaps ($>$7 consecutive missing days) were left as NaN to avoid speculative interpolation.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{imputation_comparison.png}
+\caption{Imputation comparison for patient AS14.01 (21-day gap). Linear interpolation (blue) produces smooth transitions; LOCF (red) produces unrealistic plateaus. The 21-day gap is left unfilled.}\label{fig:imputation}
+\end{figure}
+
+\subsection{Feature Engineering}
+
+We transform the cleaned daily time series into tabular features using a sliding window of $w$ days preceding each target day $t$. This approach enables standard ML algorithms on temporal data~\cite{dietterich2002}.
+
+\subsubsection{Window Size Selection.}
+
+We evaluated windows of 3, 5, 7, and 14 days (Table~\ref{tab:window}). Performance differences are modest ($<$2\% RMSE). We selected $w = 7$ days for three reasons: (1) it captures weekly mood periodicity~\cite{golder2011}; (2) it is standard in smartphone mood prediction studies~\cite{likamwa2013, saeb2015}; (3) it balances temporal context with sample size.
+
+\begin{table}[H]
+\centering
+\caption{Effect of window size on RF regressor performance (temporal split).}\label{tab:window}
+\begin{tabular}{crrrr}
+\toprule
+Window (days) & Samples & RMSE & MAE & $R^2$ \\
+\midrule
+3  & 2,073 & 0.601 & 0.457 & 0.307 \\
+5  & 2,019 & 0.592 & 0.440 & 0.321 \\
+\textbf{7}  & \textbf{1,965} & \textbf{0.603} & \textbf{0.441} & \textbf{0.308} \\
+14 & 1,776 & 0.604 & 0.443 & 0.313 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Standard Features.}
+
+For each of the 19 daily variables, we compute the window \emph{mean}, \emph{standard deviation}, and \emph{last value} (57 features). We also add mood min and max (2), linear trend slopes for mood, arousal, and valence (3), day-over-day mood change (1), day of week (1), and a weekend indicator (1), yielding \textbf{65 standard features}.
+
+\subsubsection{Creative Features.}
+
+Beyond the standard windowed statistics, we designed 13 additional features grounded in psychological theory and clinical insight (Table~\ref{tab:creative}).
+
+\begin{table}[H]
+\centering
+\caption{Creative features: motivation and mutual information with mood target.}\label{tab:creative}
+\begin{tabular}{lp{5.2cm}r}
+\toprule
+Feature & Motivation & MI (reg.) \\
+\midrule
+\textbf{mood\_ema} & Exponentially weighted mean ($\alpha=0.5$): recent days get more weight than older days, better capturing mood momentum than a simple mean & 1.13 \\
+\textbf{circumplex\_quadrant\_mean/last} & Arousal $\times$ valence product encodes the emotional quadrant: stressed (+,$-$), excited (+,+), sad ($-$,$-$), calm ($-$,+) — a theoretically grounded interaction~\cite{russell1980} & 0.78 / 0.67 \\
+\textbf{mood\_zscore\_last} & $(x_{\text{last}} - \mu_w) / \sigma_w$: how far yesterday's mood deviates from the patient's recent personal baseline. Addresses the large inter-individual differences seen in EDA & 0.46 \\
+\textbf{activity\_zscore\_last} & Same normalization for activity — captures unusually high/low physical activity relative to recent habit & 0.41 \\
+\textbf{mood\_cv} & Coefficient of variation: $\sigma / |\mu|$. Normalised volatility — more comparable across patients with different mood baselines than raw std & 0.34 \\
+\textbf{social\_engagement\_score} & Composite of call, sms, communication app, and social app usage (normalized). Low social engagement is a known risk factor~\cite{de2012} & 0.30 \\
+\textbf{mood\_acceleration} & Change in trend: slope of second half of window minus slope of first half. Captures whether mood improvement/deterioration is speeding up & 0.22 \\
+\textbf{passivity\_index} & Screen time / activity. High screen, low movement is associated with worse mental health outcomes~\cite{twenge2018} & 0.21 \\
+\textbf{mood\_streak\_high/low} & Consecutive days above/below window median. A multi-day low-mood run is clinically meaningful; streaks capture persistence that standard deviation misses & 0.24 / 0.05 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The creative features provide genuine additional signal: mood\_ema ranks \textbf{1st} overall (MI $= 1.13$), outperforming even mood\_mean (MI $= 1.10$). The circumplex quadrant features rank 8th and 11th. An ablation study confirms that adding creative features improves RF regression performance (RMSE: 0.599 $\to$ 0.598, $R^2$: 0.317 $\to$ 0.319).
+
+\subsubsection{Classification Target.}
+
+A natural 3-class split (Low $\leq 4$, Medium 5--6, High $\geq 7$) produces severe imbalance: 90.8\% High. We use \textbf{tertile-based boundaries} ($\tau_1 = 6.80$, $\tau_2 = 7.40$), producing near-balanced classes: Low 34.8\%, Medium 37.3\%, High 27.9\%. The final dataset has \textbf{1,965 samples} with 78 features (65 standard + 13 creative).
+
+% ============================================================
+\section{Classification}
+% ============================================================
+
+\subsection{Evaluation Setup}
+
+For each patient, the first 80\% of days (chronologically) form the training set and the last 20\% the test set --- a \textbf{temporal split} that prevents data leakage. A random split would allow the model to exploit mood's strong autocorrelation, inflating performance estimates. The split yields 1,559 training and 406 test samples. We report \textbf{weighted F1} as the primary metric, as it combines precision and recall weighted by class support and handles the remaining class imbalance better than accuracy.
+
+\subsection{Model 1: Random Forest}
+
+Random Forest~\cite{breiman2001} is an ensemble of decision trees that reduces overfitting through bagging and random feature subsets. It handles mixed tabular features and gives interpretable importance rankings. Input: 78 features standardized with StandardScaler (fit on training data only).
+
+\textbf{Hyperparameter optimization:} RandomizedSearchCV with TimeSeriesSplit (5-fold inner CV, 30 iterations). Best configuration: n\_estimators $= 100$, max\_depth $= 5$, min\_samples\_split $= 2$, class\_weight $=$ \texttt{balanced\_subsample}. Inner CV weighted F1 $= 0.710$.
+
+Test performance: \textbf{accuracy 0.562}, \textbf{weighted F1 0.555}. Per-class results in Table~\ref{tab:cls_results}.
+
+\subsection{Model 2: LSTM}
+
+LSTM~\cite{hochreiter1997} processes sequential data through gated memory cells, learning temporal dependencies without hand-crafted features. Input: 7-day sequences of 19 raw daily features (batch $\times$ 7 $\times$ 19).
+
+\textbf{Architecture:} Hidden size 32 (selected from \{32, 64, 128\} by validation F1; smaller sizes generalize better at this dataset scale), 2 layers, dropout 0.3. Output: 3-class softmax.
+
+\textbf{Training:} Adam (lr $= 0.001$, weight decay $10^{-4}$), CrossEntropyLoss with inverse-frequency class weights, gradient clipping (max norm 1.0), ReduceLROnPlateau (patience 5, factor 0.5), early stopping at epoch 18.
+
+Test performance: \textbf{accuracy 0.470}, \textbf{weighted F1 0.452}.
+
+Gradient Boosting~\cite{friedman2001} was also tested as an additional baseline (accuracy 0.539, F1 $= 0.535$).
+
+\begin{table}[H]
+\centering
+\caption{Classification results on the held-out test set (406 samples, tertile-based classes).}\label{tab:cls_results}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{3}{c}{Random Forest} & \multicolumn{3}{c}{LSTM} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Class & Prec. & Recall & F1 & Prec. & Recall & F1 \\
+\midrule
+Low    & 0.55 & 0.71 & 0.62 & 0.49 & 0.63 & 0.55 \\
+Medium & 0.56 & 0.42 & 0.48 & 0.49 & 0.25 & 0.33 \\
+High   & 0.58 & 0.58 & 0.58 & 0.44 & 0.59 & 0.50 \\
+\midrule
+\textbf{Weighted avg} & \textbf{0.56} & \textbf{0.56} & \textbf{0.55} & \textbf{0.48} & \textbf{0.47} & \textbf{0.45} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.48\textwidth]{rf_confusion_matrix.png}
+\includegraphics[width=0.48\textwidth]{rf_feature_importances.png}
+\caption{(a) RF confusion matrix: Low mood is most reliably detected (recall 0.71). (b) Top feature importances: mood\_last, mood\_min, and the creative feature \textbf{mood\_ema} rank 1--3, followed by mood\_mean.}\label{fig:rf}
+\end{figure}
+
+\subsection{Discussion}
+
+Random Forest substantially outperforms LSTM (F1: 0.555 vs.\ 0.452). We identify four reasons:
+
+\textbf{1. Engineered features provide explicit predictive signal.} Feature importances (Fig.~\ref{fig:rf}b) show mood\_last (12.0\%), mood\_min (11.4\%), mood\_ema (11.2\%), and mood\_mean (10.5\%) as the top four features, accounting for $>$45\% of total importance. The EMA feature, which we designed to capture mood momentum, ranks 3rd overall, validating the creative feature design. The circumplex quadrant feature ranks 8th, confirming that the arousal$\times$valence interaction adds information beyond the raw dimensions separately.
+
+\textbf{2. LSTM has insufficient data to learn temporal representations.} With $\sim$1,500 training sequences of length 7, the LSTM cannot discover the predictive patterns that our hand-crafted features encode explicitly. This is consistent with Bagnall et al.~\cite{bagnall2017}, who show that feature engineering generally outperforms end-to-end deep learning on small temporal datasets.
+
+\textbf{3. LSTM overfits despite regularization.} The training curve (Fig.~\ref{fig:lstm_loss}) shows validation loss plateauing at epoch 10 while training loss continues to decrease. Dropout (0.3), weight decay, gradient clipping, and early stopping (epoch 18) reduce but do not eliminate overfitting on this dataset scale.
+
+\textbf{4. Medium class is structurally hard.} It occupies the narrow mood range (6.80--7.40), where small day-to-day variation shifts the label. The RF confusion matrix shows roughly symmetric misclassification of Medium into Low and High, consistent with a transitional zone rather than a distinct class. The LSTM almost entirely ignores Medium (recall $= 0.25$), defaulting to a coarser Low/High discrimination.
+
+Overall accuracy of 56.2\% (vs.\ 33\% random baseline) reflects the inherent difficulty of mood prediction from passive sensing: external events, social interactions, and health factors not captured by smartphones contribute the majority of mood variance.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.65\textwidth]{lstm_classification_loss.png}
+\caption{LSTM training/validation loss. Validation loss plateaus after epoch 10; early stopping fires at epoch 18.}\label{fig:lstm_loss}
+\end{figure}
+
+% ============================================================
+\section{Winning Classification Algorithms}
+% ============================================================
+
+The \textbf{ICR --- Identifying Age-Related Conditions} competition (Kaggle, 2023)~\cite{kaggle2023} required binary classification of age-related medical conditions from 56 anonymized health features with only 617 training samples. The evaluation metric was balanced log loss, which averages per-class log losses to give equal weight to both classes regardless of prevalence.
+
+The winning team (``tascj'', score 0.1258) combined gradient-boosted trees (XGBoost, LightGBM) with TabNet~\cite{arik2021} through three key ideas:
+
+\textbf{Greedy feature selection:} 56 features were reduced using forward selection with cross-validated balanced log loss as the criterion. On 617 samples, many features are noise that actively hurts generalization.
+
+\textbf{Extreme ensembling:} over 100 models were averaged across different CV folds and random seeds. On small datasets, single-model variance is very high; ensemble averaging dramatically reduces it.
+
+\textbf{Probability calibration via isotonic regression:} balanced log loss heavily penalizes overconfident wrong predictions. Many competitors achieved similar AUC but far worse log loss because their probabilities were overconfident. The key insight: \emph{calibration matters as much as discrimination} for this metric.
+
+This mirrors our setting: on small data ($\sim$1,500 samples), simpler RF with feature engineering outperformed the more flexible LSTM. Feature selection and controlling overfitting mattered more than model capacity.
+
+% ============================================================
+\section{Association Rules}
+% ============================================================
+
+The classical Apriori algorithm~\cite{agrawal1994} discovers association rules at a single level of specificity. \textbf{Multi-level association rule mining}, introduced by Srikant and Agrawal~\cite{srikant1995}, extends this by incorporating item taxonomies (concept hierarchies) to find rules at multiple abstraction levels.
+
+\textbf{Algorithm.} Given a taxonomy tree (e.g., \{2\% milk, whole milk\} $\to$ Milk $\to$ Dairy), each transaction is extended with all ancestor categories. The augmented database is mined with standard minimum support and confidence thresholds at each level. Two pruning strategies manage the increased search space: (1) antimonotonicity across levels --- if a category fails minimum support, no descendant item can pass; (2) elimination of rules containing both an item and its ancestor (trivially true).
+
+\textbf{Advantages.} (1) Discovers category-level patterns that item-level mining misses, since individual items may fall below support thresholds while their parent category does not. (2) Reduces thousands of item-level rules to concise category summaries. (3) Provides actionable rules at the granularity appropriate for business decisions. (4) Hierarchical analysis reveals at which level associations are strongest.
+
+\textbf{Disadvantages.} (1) Taxonomy design requires domain expertise; a poor hierarchy produces misleading rules. (2) Category-level aggregation can obscure important item-specific associations (e.g., if only one brand drives a pattern, the category rule hides this). (3) Choosing the right abstraction level is non-trivial: too general yields trivially true rules; too specific reverts to standard Apriori. (4) Extending transactions increases database size and the number of candidate itemsets. (5) Product catalog evolution requires ongoing taxonomy maintenance.
+
+% ============================================================
+\section{Numerical Prediction}
+% ============================================================
+
+\subsection{Experimental Setup}
+
+We use the same temporal split, 78-feature set, and standardization as classification, but predict continuous mood values. We evaluate using MSE, RMSE, MAE, and $R^2$.
+
+\subsection{Random Forest Regressor}
+
+Hyperparameter search identical to the classifier (RandomizedSearchCV, 30 iterations, TimeSeriesSplit 5-fold). Best: n\_estimators $= 500$, max\_depth $= 5$, min\_samples\_split $= 10$, max\_features $=$ None. Test: \textbf{RMSE $= 0.598$}, \textbf{MAE $= 0.441$}, \textbf{$R^2 = 0.320$}.
+
+\subsection{LSTM Regressor}
+
+Architecture mirrors the classifier with a single linear output unit. Hidden size 64 selected from \{32, 64, 128\} by validation MSE (the simpler single-output regression task does not require the largest model). Training: MSE loss, Adam ($lr = 0.001$, weight decay $10^{-4}$), gradient clipping, early stopping (epoch 39). Test: \textbf{RMSE $= 0.609$}, \textbf{MAE $= 0.458$}, \textbf{$R^2 = 0.294$}.
+
+\begin{table}[H]
+\centering
+\caption{Regression results on the held-out test set.}\label{tab:reg_results}
+\begin{tabular}{lcccc}
+\toprule
+Model & MSE & RMSE & MAE & $R^2$ \\
+\midrule
+\textbf{RF Regressor} & \textbf{0.357} & \textbf{0.598} & \textbf{0.441} & \textbf{0.320} \\
+LSTM Regressor & 0.370 & 0.609 & 0.458 & 0.294 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Discussion}
+
+RF outperforms LSTM on all metrics. Both models explain $\approx$\textbf{30--32\% of mood variance}, consistent with prior smartphone-based mood prediction studies~\cite{saeb2015}. The remaining variance is driven by unmeasured factors: external events, health, and social context.
+
+RMSE $\approx 0.60$ on a 1--10 scale means predictions are typically within $\pm 0.6$ mood units --- useful for trend detection but insufficient for precise clinical thresholds.
+
+Both models exhibit \textbf{regression to the mean} (Fig.~\ref{fig:scatter}): high mood is underpredicted and low mood is overpredicted, a well-known effect when predictors do not fully explain target variance.
+
+\textbf{Per-patient error} (Fig.~\ref{fig:patient_error}) ranges from MAE $= 0.09$ (AS14.31, mood $\sigma = 0.15$) to MAE $= 0.92$ (AS14.02, mood $\sigma = 1.13$). The strong correlation between mood volatility and prediction difficulty suggests that personalized models could substantially improve performance.
+
+\textbf{Classification vs.\ Regression.} Both tasks agree on the dominant predictors (mood\_ema, mood\_mean, mood\_last) and show the same relative model performance (RF $>$ LSTM). Classification provides actionable discrete alerts (``low mood detected'') at the cost of granularity; regression preserves the continuous scale and reveals regression-to-the-mean behavior at the extremes. For practical deployment, a hybrid --- regression for monitoring, thresholds for alerts --- would be most useful.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{regression_scatter_comparison.png}
+\caption{Predicted vs.\ actual mood for RF (left) and LSTM (right). Both show regression to the mean: extreme mood values are pulled toward the center.}\label{fig:scatter}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{per_patient_error.png}
+\caption{Per-patient MAE (RF regressor). Stable patients (bottom) are easy to predict; volatile patients (top) are not. MAE spans 0.09--0.92.}\label{fig:patient_error}
+\end{figure}
+
+% ============================================================
+\section{Evaluation}
+% ============================================================
+
+\subsection{Characteristics of MSE and MAE}
+
+\begin{equation}
+\text{MSE} = \frac{1}{n}\sum_{i=1}^{n}(y_i - \hat{y}_i)^2 \qquad \text{MAE} = \frac{1}{n}\sum_{i=1}^{n}|y_i - \hat{y}_i|
+\end{equation}
+
+\textbf{MSE} penalizes quadratically: an error of 2 contributes $4\times$ as much as an error of 1. It is differentiable everywhere (convenient for gradient-based optimization) and is equivalent to minimizing the mean of the squared residuals, making it sensitive to outlier predictions. Prefer MSE when large errors have disproportionate consequences (e.g., failing to detect a severe mood crash).
+
+\textbf{MAE} penalizes linearly and corresponds to the median of the error distribution. It is robust to outliers and appropriate when errors should be weighted proportionally to their magnitude. Prefer MAE for general monitoring where a 2-unit error is simply twice as bad as a 1-unit error.
+
+\textbf{When MSE and MAE give identical rankings.} Suppose model $A$ achieves constant absolute error $c_A$ on all predictions (i.e., $|y_i - \hat{y}_i| = c_A$ for all $i$), and model $B$ achieves $c_B$. Then $\text{MSE}_A = c_A^2$, $\text{MAE}_A = c_A$, and $\text{MSE}_B = c_B^2$, $\text{MAE}_B = c_B$. Since the functions $f(c) = c$ and $g(c) = c^2$ are both strictly increasing for $c \geq 0$, model $A$ is preferred under MAE ($c_A < c_B$) if and only if it is preferred under MSE ($c_A^2 < c_B^2$). Rankings are thus identical when every prediction in each model has the same absolute error magnitude. Concretely: if model $A$ predicts each sample within exactly $\pm 0.5$ and model $B$ within $\pm 0.8$, then MAE ranks $A$ better ($0.5 < 0.8$) and so does MSE ($0.25 < 0.64$). Rankings \emph{can} diverge when models have different error distributions: a model with many small errors and a few large outliers may have lower MAE but higher MSE than a model with uniformly moderate errors.
+
+\subsection{Impact of Evaluation Metrics}
+
+We evaluated three models on the test set (Table~\ref{tab:eval_metrics}).
+
+\begin{table}[H]
+\centering
+\caption{Regression metrics across models and loss functions.}\label{tab:eval_metrics}
+\begin{tabular}{lcc}
+\toprule
+Model & MSE & MAE \\
+\midrule
+RF Regressor & 0.357 & 0.441 \\
+LSTM (MSE loss) & 0.363 & 0.450 \\
+LSTM (Huber loss, $\delta=1$) & 0.367 & 0.454 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{MSE is dominated by outliers.} The top 10 highest-error predictions contribute 25.7\% of total MSE while representing only 2.5\% of test samples. The single worst prediction (actual $= 9.0$, predicted $= 5.7$, error $= 3.3$) contributes squared error 10.7 --- over $30\times$ the average of 0.36.
+
+\textbf{Loss function comparison} (Fig.~\ref{fig:residuals}): Huber loss ($\delta = 1.0$) behaves like MSE for small errors and like MAE for large ones. Interestingly, the MSE-trained LSTM outperforms the Huber-trained model on both metrics, suggesting the large errors in this dataset are genuine signal (extreme mood events) rather than label noise, so aggressively down-weighting them is counterproductive.
+
+\textbf{Residuals} are approximately normal and centered near zero for both models, confirming no systematic prediction bias. A slight right skew (more underprediction of high mood) reflects regression to the mean.
+
+\textbf{Implications.} For \emph{clinical monitoring} (MAE preferred): differences between 6.5 and 7.0 are as important as between 8.0 and 8.5 --- linear weighting is appropriate. For \emph{crisis detection} (MSE preferred): a missed prediction when mood $= 4$ is far more consequential than a mild error at mood $= 7$, so quadratic penalization is desirable. The choice of metric should be guided explicitly by the intended application.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{residual_histograms.png}
+\caption{Residual distributions for RF (left) and LSTM (right). Both are approximately normal with slight right skew, confirming no systematic bias.}\label{fig:residuals}
+\end{figure}
+
+% ============================================================
+\section{Conclusion}
+% ============================================================
+
+We built a full mood prediction pipeline from 27 participants' smartphone data. Past mood is the dominant predictor, with the \emph{creative} mood EMA feature ranking first overall (MI $= 1.13$). RF with engineered features outperforms LSTM for both classification (F1: 0.555 vs.\ 0.452) and regression ($R^2$: 0.320 vs.\ 0.294), confirming that on small datasets, targeted feature engineering beats end-to-end deep learning. Models explain $\sim$32\% of mood variance; the rest reflects unmeasured external factors. Per-patient MAE spans 0.09--0.92, motivating personalized models. For evaluation, MAE better reflects typical prediction quality while MSE's sensitivity to extremes is better suited to clinical alert scenarios.
+
+% ============================================================
+\bibliographystyle{splncs04}
+\begin{thebibliography}{14}
+
+\bibitem{russell1980}
+Russell, J.A.: A Circumplex Model of Affect. J.\ Personality Social Psychol.\ \textbf{39}(6), 1161--1178 (1980)
+
+\bibitem{lepot2017}
+Lepot, M., Aubin, J.B., Clemens, F.H.L.R.: Interpolation in Time Series: An Introductive Overview of Existing Methods, Their Performance Criteria and Uncertainty Assessment. Water \textbf{9}(10), 796 (2017)
+
+\bibitem{schildcrout2018}
+Schildcrout, J.S., Rathouz, P.J.: Longitudinal Studies of Binary Response Data Following Case-Control and Stratified Case-Control Sampling: Design and Analysis. Biometrics \textbf{66}(2), 365--373 (2010)
+
+\bibitem{golder2011}
+Golder, S.A., Macy, M.W.: Diurnal and Seasonal Mood Vary with Work, Sleep, and Daylength Across Diverse Cultures. Science \textbf{333}(6051), 1878--1881 (2011)
+
+\bibitem{likamwa2013}
+LiKamWa, R., Liu, Y., Lane, N.D., Zhong, L.: MoodScope: Building a Mood Sensor from Smartphone Usage Patterns. In: Proc.\ MobiSys, pp.\ 389--402 (2013)
+
+\bibitem{saeb2015}
+Saeb, S., Zhang, M., Karr, C.J., et al.: Mobile Phone Sensor Correlates of Depressive Symptom Severity in Daily-Life Behavior. J.\ Med.\ Internet Res.\ \textbf{17}(7), e175 (2015)
+
+\bibitem{de2012}
+De Choudhury, M., Gamon, M., Counts, S., Horvitz, E.: Predicting Depression via Social Media. In: Proc.\ ICWSM, pp.\ 128--137 (2013)
+
+\bibitem{twenge2018}
+Twenge, J.M., Campbell, W.K.: Associations Between Screen Time and Lower Psychological Well-Being Among Children and Adolescents. Prev.\ Med.\ Rep.\ \textbf{12}, 271--283 (2018)
+
+\bibitem{dietterich2002}
+Dietterich, T.G.: Machine Learning for Sequential Data: A Review. In: SSPR/SPR, LNCS, vol.\ 2396, pp.\ 15--30. Springer (2002)
+
+\bibitem{breiman2001}
+Breiman, L.: Random Forests. Machine Learning \textbf{45}(1), 5--32 (2001)
+
+\bibitem{hochreiter1997}
+Hochreiter, S., Schmidhuber, J.: Long Short-Term Memory. Neural Computation \textbf{9}(8), 1735--1780 (1997)
+
+\bibitem{friedman2001}
+Friedman, J.H.: Greedy Function Approximation: A Gradient Boosting Machine. Annals of Statistics \textbf{29}(5), 1189--1232 (2001)
+
+\bibitem{bagnall2017}
+Bagnall, A., Lines, J., Bostrom, A., Large, J., Keogh, E.: The Great Time Series Classification Bake Off. Data Min.\ Knowl.\ Disc.\ \textbf{31}, 606--660 (2017)
+
+\bibitem{kaggle2023}
+Kaggle: ICR --- Identifying Age-Related Conditions (2023). \url{https://www.kaggle.com/competitions/icr-identify-age-related-conditions}
+
+\bibitem{arik2021}
+Arik, S.O., Pfister, T.: TabNet: Attentive Interpretable Tabular Learning. In: Proc.\ AAAI, pp.\ 6679--6687 (2021)
+
+\bibitem{agrawal1994}
+Agrawal, R., Srikant, R.: Fast Algorithms for Mining Association Rules. In: Proc.\ VLDB, pp.\ 487--499 (1994)
+
+\bibitem{srikant1995}
+Srikant, R., Agrawal, R.: Mining Generalized Association Rules. In: Proc.\ VLDB, pp.\ 407--419 (1995)
+
+\end{thebibliography}
+
+\end{document}

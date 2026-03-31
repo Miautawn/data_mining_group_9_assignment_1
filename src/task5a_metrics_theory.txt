@@ -1,0 +1,27 @@
+TASK 5A: Evaluation Metrics Theory — MSE and MAE
+
+1. FORMULAS
+
+Mean Squared Error (MSE):
+  MSE = (1/n) * sum_{i=1}^{n} (y_i - y_hat_i)^2
+
+Mean Absolute Error (MAE):
+  MAE = (1/n) * sum_{i=1}^{n} |y_i - y_hat_i|
+
+Where y_i is the true value, y_hat_i is the predicted value, and n is the number of samples.
+
+2. WHY USE ONE OVER THE OTHER
+
+MSE penalizes large errors quadratically — an error of 2 contributes 4 to the MSE, while an error of 1 contributes only 1. This makes MSE sensitive to outliers: a few large prediction errors can dominate the metric. MSE is preferred when large errors are particularly undesirable and should be heavily penalized (e.g., in safety-critical applications). It is also differentiable everywhere, making it mathematically convenient as a loss function for gradient-based optimization.
+
+MAE treats all errors linearly — an error of 2 contributes exactly twice as much as an error of 1. This makes MAE robust to outliers: a single large error does not disproportionately inflate the metric. MAE is preferred when the data contains outliers or when all errors should be weighted equally regardless of magnitude. MAE corresponds to the median of the error distribution, while MSE corresponds to the mean.
+
+In practice: use MSE when you want to penalize large deviations heavily (e.g., predicting extreme mood drops is critical). Use MAE when you want a metric that reflects typical prediction quality and is not skewed by a few extreme cases.
+
+3. WHEN MSE EQUALS MAE (IN RANKING)
+
+MSE and MAE give identical model rankings when all absolute errors are equal in magnitude. If every prediction is off by exactly ±c, then:
+  MSE = c²
+  MAE = c
+
+In this case, both metrics are monotonic functions of c, so any model comparison based on MSE will yield the same ranking as one based on MAE. More generally, if two models produce error distributions with the same variance (i.e., the spread of errors is identical), MSE and MAE may still disagree on rankings because MSE is sensitive to the shape of the error distribution (specifically, to kurtosis), while MAE is not.
