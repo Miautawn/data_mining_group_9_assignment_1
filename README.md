@@ -17,3 +17,13 @@ Whenever you wish to execute a python script from the terminal, you can do it by
 ```bash
 poetry run python some_file.py
 ```
+
+If you're working in jupyter notebooks from VSCode, you can use the project's virtual environment's pyhon interpreter (with all the dependencies installed) by:
+1. Creating a `.ipynb` file
+2. Clicking "select kernel" in the top right
+3. Clicking "python environments" and  selecting the local `.venv` one
+
+![alt text](./images/venv_selection.png)
+
+> [!NOTE]
+> You may need to install the `Jupyter` [extention](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter) in the VS Code
