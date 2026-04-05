@@ -1,0 +1,4 @@
+[core]
+    remote = origin
+['remote "origin"']
+    url = https://dagshub.com/Miautawn/data_mining_group_9_assignment_1.dvc

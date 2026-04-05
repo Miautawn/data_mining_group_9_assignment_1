@@ -29,3 +29,4 @@ __pycache__/
 *.pyc
 *.pyo
 .ipynb_checkpoints/
+/data_example.txt
