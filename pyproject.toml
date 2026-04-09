@@ -14,6 +14,7 @@ scikit-learn = "^1.8.0"
 pre-commit = "^4.5.1"
 ruff = "^0.15.8"
 ipykernel = "^7.2.0"
+pyarrow = "^23.0.1"
 
 
 [build-system]
