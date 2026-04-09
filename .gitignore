@@ -14,6 +14,8 @@
 dataset_mood_smartphone.csv
 data/raw/
 data/processed/
+*.parquet
+*.csv
 
 # Generated figures (reproducible from code)
 figures/
