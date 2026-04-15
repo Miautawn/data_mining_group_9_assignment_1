@@ -13,14 +13,12 @@ scikit-learn = "^1.8.0"
 scipy = "^1.16.2"
 matplotlib = "^3.10.7"
 seaborn = "^0.13.2"
-torch = "^2.9.0"
 pre-commit = "^4.5.1"
 ruff = "^0.15.8"
 ipykernel = "^7.2.0"
 pyarrow = "^23.0.1"
 tqdm = "^4.67.3"
 torch = {version = "^2.11.0+cpu", source = "pytorch_cpu"}
-
 
 [[tool.poetry.source]]
 name = "pytorch_cpu"
