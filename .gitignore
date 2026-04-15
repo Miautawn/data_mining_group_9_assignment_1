@@ -16,6 +16,7 @@ data/raw/
 data/processed/
 *.parquet
 *.csv
+*.pt
 
 # Generated figures (reproducible from code)
 figures/
