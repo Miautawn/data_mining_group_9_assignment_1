@@ -20,6 +20,9 @@ pyarrow = "^23.0.1"
 tqdm = "^4.67.3"
 pmdarima = "^2.0.4"
 torch = {version = "^2.11.0+cpu", source = "pytorch_cpu"}
+plotly = "^6.7.0"
+kaleido = "^1.2.0"
+nbformat = "^5.10.4"
 
 [[tool.poetry.source]]
 name = "pytorch_cpu"
