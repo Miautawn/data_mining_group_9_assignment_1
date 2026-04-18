@@ -165,7 +165,7 @@ The creative features provide genuine additional signal: mood\_ema ranks \textbf
 
 \subsubsection{Classification Target.}
 
-A natural 3-class split (Low $\leq 4$, Medium 5--6, High $\geq 7$) produces severe imbalance: 90.8\% High. We use \textbf{tertile-based boundaries} ($\tau_1 = 6.80$, $\tau_2 = 7.40$), producing near-balanced classes: Low 34.8\%, Medium 37.3\%, High 27.9\%. The final dataset has \textbf{1,965 samples} with 78 features (65 standard + 13 creative).
+A natural 3-class split (Low $\leq 4$, Medium 5--6, High $\geq 7$) produces severe imbalance: 90.8\% High. We use \textbf{tertile-based boundaries} ($\tau_1 = 6.67$, $\tau_2 = 7.20$), producing near-balanced classes: Low 29.3\%, Medium 35.4\%, High 35.3\%. The final dataset has \textbf{1,268 samples} with 134 features.
 
 % ============================================================
 \section{Classification}
@@ -173,17 +173,29 @@ A natural 3-class split (Low $\leq 4$, Medium 5--6, High $\geq 7$) produces seve
 
 \subsection{Evaluation Setup}
 
-For each patient, the first 80\% of days (chronologically) form the training set and the last 20\% the test set --- a \textbf{temporal split} that prevents data leakage. A random split would allow the model to exploit mood's strong autocorrelation, inflating performance estimates. The split yields 1,559 training and 406 test samples. We report \textbf{weighted F1} as the primary metric, as it combines precision and recall weighted by class support and handles the remaining class imbalance better than accuracy.
+For each patient, observations are split chronologically into training, validation, and test sets --- a \textbf{temporal split} that prevents data leakage. A random split would allow the model to exploit mood's strong autocorrelation, inflating performance estimates. The split yields 1,000 training (train+validation) and 268 test samples. Hyperparameter tuning uses a \texttt{PredefinedSplit} with the validation fold; the test set is held out until final evaluation. We report \textbf{macro F1} as the primary model selection metric (treats all three classes equally) and also report weighted F1 and accuracy.
 
-\subsection{Model 1: Random Forest}
+% ----------------------------------------------------------
+\subsection{Non-Temporal Approach}
+% ----------------------------------------------------------
 
-Random Forest~\cite{breiman2001} is an ensemble of decision trees that reduces overfitting through bagging and random feature subsets. It handles mixed tabular features and gives interpretable importance rankings. Input: 78 features standardized with StandardScaler (fit on training data only).
+The non-temporal pipeline converts the time series into a flat tabular feature vector by aggregating a sliding window of $w$ preceding days (window sizes 1, 3, 5, 7, 14 evaluated). This allows standard classifiers to operate on the engineered feature set without requiring an explicit sequential model. The best (window size, model) combination is selected by validation macro F1; the selected model is then retrained on train+validation before final test evaluation.
 
-\textbf{Hyperparameter optimization:} RandomizedSearchCV with TimeSeriesSplit (5-fold inner CV, 30 iterations). Best configuration: n\_estimators $= 100$, max\_depth $= 5$, min\_samples\_split $= 2$, class\_weight $=$ \texttt{balanced\_subsample}. Inner CV weighted F1 $= 0.710$.
+\subsubsection{Model 1: Random Forest}
 
-Test performance: \textbf{accuracy 0.562}, \textbf{weighted F1 0.555}. Per-class results in Table~\ref{tab:cls_results}.
+Random Forest~\cite{breiman2001} is an ensemble of decision trees that reduces overfitting through bagging and random feature subsets. It handles mixed tabular features and gives interpretable importance rankings. Input: 134 features with median imputation (fit on training data only).
 
-\subsection{Model 2: LSTM}
+\textbf{Hyperparameter optimization:} RandomizedSearchCV with PredefinedSplit validation (80 iterations) across five window sizes. Best configuration: window $= 5$ days, n\_estimators $= 100$, max\_depth $= 20$, min\_samples\_split $= 2$, min\_samples\_leaf $= 2$, max\_features $= 0.5$. Validation macro F1 $= 0.558$.
+
+Test performance: \textbf{accuracy 0.493}, \textbf{macro F1 0.499}, \textbf{weighted F1 0.490}. Per-class results in Table~\ref{tab:cls_results}.
+
+\subsubsection{Model 2: Histogram Gradient Boosting}
+
+Histogram Gradient Boosting~\cite{friedman2001} was also evaluated. It uses histogram-binned splits for efficiency and natively handles missing values. Same window-size sweep and PredefinedSplit search protocol as RF. At the best window ($= 5$ days) it achieved val macro F1 $= 0.486$, below the RF baseline, so RF was selected as the non-temporal winner.
+
+% ----------------------------------------------------------
+\subsection{Temporal Approach: LSTM}
+% ----------------------------------------------------------
 
 LSTM~\cite{hochreiter1997} processes sequential data through gated memory cells, learning temporal dependencies without hand-crafted features. Input: 7-day sequences of 19 raw daily features (batch $\times$ 7 $\times$ 19).
 
@@ -193,22 +205,20 @@ LSTM~\cite{hochreiter1997} processes sequential data through gated memory cells,
 
 Test performance: \textbf{accuracy 0.470}, \textbf{weighted F1 0.452}.
 
-Gradient Boosting~\cite{friedman2001} was also tested as an additional baseline (accuracy 0.539, F1 $= 0.535$).
-
 \begin{table}[H]
 \centering
-\caption{Classification results on the held-out test set (406 samples, tertile-based classes).}\label{tab:cls_results}
+\caption{Classification results on the held-out test set (268 samples, tertile-based classes).}\label{tab:cls_results}
 \begin{tabular}{lcccccc}
 \toprule
  & \multicolumn{3}{c}{Random Forest} & \multicolumn{3}{c}{LSTM} \\
 \cmidrule(lr){2-4} \cmidrule(lr){5-7}
 Class & Prec. & Recall & F1 & Prec. & Recall & F1 \\
 \midrule
-Low    & 0.55 & 0.71 & 0.62 & 0.49 & 0.63 & 0.55 \\
-Medium & 0.56 & 0.42 & 0.48 & 0.49 & 0.25 & 0.33 \\
-High   & 0.58 & 0.58 & 0.58 & 0.44 & 0.59 & 0.50 \\
+Low    & 0.54 & 0.53 & 0.53 & 0.49 & 0.63 & 0.55 \\
+Medium & 0.46 & 0.41 & 0.43 & 0.49 & 0.25 & 0.33 \\
+High   & 0.50 & 0.57 & 0.53 & 0.44 & 0.59 & 0.50 \\
 \midrule
-\textbf{Weighted avg} & \textbf{0.56} & \textbf{0.56} & \textbf{0.55} & \textbf{0.48} & \textbf{0.47} & \textbf{0.45} \\
+\textbf{Weighted avg} & \textbf{0.49} & \textbf{0.49} & \textbf{0.49} & \textbf{0.48} & \textbf{0.47} & \textbf{0.45} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -217,22 +227,22 @@ High   & 0.58 & 0.58 & 0.58 & 0.44 & 0.59 & 0.50 \\
 \centering
 \includegraphics[width=0.48\textwidth]{rf_confusion_matrix.png}
 \includegraphics[width=0.48\textwidth]{rf_feature_importances.png}
-\caption{(a) RF confusion matrix: Low mood is most reliably detected (recall 0.71). (b) Top feature importances: mood\_last, mood\_min, and the creative feature \textbf{mood\_ema} rank 1--3, followed by mood\_mean.}\label{fig:rf}
+\caption{(a) RF confusion matrix (window $= 5$ days): High and Low mood are more reliably classified than Medium. (b) Top feature importances: mood\_win\_mean, mood\_lag1, and mood\_win\_min rank 1--3; behavioural and circumplex features provide additional signal.}\label{fig:rf}
 \end{figure}
 
 \subsection{Discussion}
 
-Random Forest substantially outperforms LSTM (F1: 0.555 vs.\ 0.452). We identify four reasons:
+Random Forest substantially outperforms LSTM (weighted F1: 0.490 vs.\ 0.452). We identify four reasons:
 
-\textbf{1. Engineered features provide explicit predictive signal.} Feature importances (Fig.~\ref{fig:rf}b) show mood\_last (12.0\%), mood\_min (11.4\%), mood\_ema (11.2\%), and mood\_mean (10.5\%) as the top four features, accounting for $>$45\% of total importance. The EMA feature, which we designed to capture mood momentum, ranks 3rd overall, validating the creative feature design. The circumplex quadrant feature ranks 8th, confirming that the arousal$\times$valence interaction adds information beyond the raw dimensions separately.
+\textbf{1. Engineered features provide explicit predictive signal.} Feature importances (Fig.~\ref{fig:rf}b) show mood\_win\_mean (9.9\%), mood\_lag1 (6.6\%), and mood\_win\_min (2.5\%) as the top three features. Recent and aggregated mood history dominates, consistent with mood's strong autocorrelation. Behavioural proportion features (e.g., appCat\_entertainment\_prop, appCat\_communication\_prop) and circumplex arousal statistics also contribute, confirming that passive sensing adds signal beyond mood history alone.
 
 \textbf{2. LSTM has insufficient data to learn temporal representations.} With $\sim$1,500 training sequences of length 7, the LSTM cannot discover the predictive patterns that our hand-crafted features encode explicitly. This is consistent with Bagnall et al.~\cite{bagnall2017}, who show that feature engineering generally outperforms end-to-end deep learning on small temporal datasets.
 
 \textbf{3. LSTM overfits despite regularization.} The training curve (Fig.~\ref{fig:lstm_loss}) shows validation loss plateauing at epoch 10 while training loss continues to decrease. Dropout (0.3), weight decay, gradient clipping, and early stopping (epoch 18) reduce but do not eliminate overfitting on this dataset scale.
 
-\textbf{4. Medium class is structurally hard.} It occupies the narrow mood range (6.80--7.40), where small day-to-day variation shifts the label. The RF confusion matrix shows roughly symmetric misclassification of Medium into Low and High, consistent with a transitional zone rather than a distinct class. The LSTM almost entirely ignores Medium (recall $= 0.25$), defaulting to a coarser Low/High discrimination.
+\textbf{4. Medium class is structurally hard.} It occupies the narrow mood range (6.67--7.20), where small day-to-day variation shifts the label. The RF confusion matrix shows roughly symmetric misclassification of Medium into Low and High, consistent with a transitional zone rather than a distinct class. The LSTM almost entirely ignores Medium (recall $= 0.25$), defaulting to a coarser Low/High discrimination.
 
-Overall accuracy of 56.2\% (vs.\ 33\% random baseline) reflects the inherent difficulty of mood prediction from passive sensing: external events, social interactions, and health factors not captured by smartphones contribute the majority of mood variance.
+Overall accuracy of 49.3\% (vs.\ 33\% random baseline) reflects the inherent difficulty of mood prediction from passive sensing: external events, social interactions, and health factors not captured by smartphones contribute the majority of mood variance.
 
 \begin{figure}[H]
 \centering
@@ -373,7 +383,7 @@ LSTM (Huber loss, $\delta=1$) & 0.367 & 0.454 \\
 \section{Conclusion}
 % ============================================================
 
-We built a full mood prediction pipeline from 27 participants' smartphone data. Past mood is the dominant predictor, with the \emph{creative} mood EMA feature ranking first overall (MI $= 1.13$). RF with engineered features outperforms LSTM for both classification (F1: 0.555 vs.\ 0.452) and regression ($R^2$: 0.320 vs.\ 0.294), confirming that on small datasets, targeted feature engineering beats end-to-end deep learning. Models explain $\sim$32\% of mood variance; the rest reflects unmeasured external factors. Per-patient MAE spans 0.09--0.92, motivating personalized models. For evaluation, MAE better reflects typical prediction quality while MSE's sensitivity to extremes is better suited to clinical alert scenarios.
+We built a full mood prediction pipeline from 27 participants' smartphone data. Past mood (mood\_win\_mean, mood\_lag1) is the dominant predictor. RF with engineered features outperforms LSTM for both classification (weighted F1: 0.490 vs.\ 0.452) and regression ($R^2$: 0.320 vs.\ 0.294), confirming that on small datasets, targeted feature engineering beats end-to-end deep learning. Models explain $\sim$32\% of mood variance; the rest reflects unmeasured external factors. Per-patient MAE spans 0.09--0.92, motivating personalized models. For evaluation, MAE better reflects typical prediction quality while MSE's sensitivity to extremes is better suited to clinical alert scenarios.
 
 % ============================================================
 \bibliographystyle{splncs04}
