@@ -13,20 +13,12 @@ def get_dataloader(dataset_kwargs: dict, dataloader_kwargs: dict) -> DataLoader:
 
 
 class RnnDataset(Dataset):
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        label_col: str,
-    ):
+    def __init__(self, df: pd.DataFrame, label_col: str, feature_cols: list[str]):
         self.X = []
         self.y = []
         self.user_ids = []
         for name, group in df.groupby("window_id"):
-            self.X.append(
-                group.drop(
-                    columns=["id", "window_id", "date", "split", "target_mean_mood"]
-                ).values
-            )
+            self.X.append(group[feature_cols].values)
             self.y.append(group[label_col].iloc[0])
             self.user_ids.append(group["id"].iloc[0])
 
@@ -108,7 +100,6 @@ class RnnClassifier(nn.Module):
             nn.AlphaDropout(0.3),
             nn.Linear(128, 64),
             nn.SELU(),
-            nn.AlphaDropout(0.1),
             nn.Linear(64, n_classes),
         )
 
