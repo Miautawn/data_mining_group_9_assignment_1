@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.compose import ColumnTransformer
 from sklearn.utils.validation import check_is_fitted
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
@@ -173,3 +174,28 @@ class LocalUserScaler(BaseEstimator, TransformerMixin):
 
     def get_feature_names_out(self, input_features=None):
         return self.cols
+
+
+def decode_labels(
+    preprocessor: ColumnTransformer, user_ids: np.array, encoded_labels: np.array
+) -> float:
+    """Decode the encoded regression labels back to its original scale.
+
+    Args:
+        preprocessor (Pipeline): The fitted preprocessing pipeline.
+        user_id (int): The oridinally encoded user index.
+        encoded_label (float): The encoded label value to decode.
+
+    Returns:
+        float: The decoded label value in the original scale.
+    """
+
+    decoded_labels = []
+    for encoded_label, user_id in zip(encoded_labels, user_ids):
+        mean, std = preprocessor.named_transformers_["label"].stats_[user_id][
+            "target_mean_mood"
+        ]
+
+        decoded_labels.append(encoded_label * std + mean)
+
+    return decoded_labels
